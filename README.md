@@ -7,7 +7,7 @@ APIs (asyncio) → SQLite (caché + historial) → Pandas → MPI (por aeropuert
 AirLabs · OpenWeather · OpenAQ · ThingSpeak          numba | mlx | cupy | numpy
 ```
 
-## Instalación en Mac (M1 / M1 Pro)
+## Instalación en Mac
 
 ```bash
 brew install open-mpi          # necesario para mpi4py
