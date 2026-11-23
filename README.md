@@ -85,3 +85,4 @@ Probado con `pytest` (82 pruebas, datos simulados y respuestas de API falsas): c
 4. El dashboard de Streamlit (solo se verificó que compila).
 
 Si algo falla, copia el mensaje de error completo y se corrige.
+# analisis_de_trafico_aereo
