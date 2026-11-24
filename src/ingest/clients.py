@@ -19,6 +19,8 @@ OPENWEATHER_AIR = "https://api.openweathermap.org/data/2.5/air_pollution"
 OPENAQ_LATEST = "https://api.openaq.org/v3/locations"  # sin verificar con clave real
 THINGSPEAK_FEEDS = "https://api.thingspeak.com/channels/{channel}/feeds.json"
 
+
+#TTL es el tiempo de vida de la caché en segundos. None = sin límite, 0 = vencida inmediatamente.
 TTL_FLIGHTS = 300       # 5 min: los vuelos cambian rápido
 TTL_WEATHER = 900       # 15 min
 TTL_SENSORS = 300
