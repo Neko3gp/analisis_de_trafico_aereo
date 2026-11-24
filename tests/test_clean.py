@@ -6,7 +6,7 @@ from src.ingest.demo import generate_demo
 from src.schema import FLIGHT_COLS
 
 HOURLY_COLS = ["airport", "hour", "flights", "delayed", "delay_rate", "temp", "humidity",
-               "wind_speed", "rain_mm", "visibility", "pm25", "pm10"]
+               "wind_speed", "rain_mm", "visibility"]
 
 
 def _flights(rows):

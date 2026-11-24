@@ -9,9 +9,6 @@ DEFAULT_AIRPORTS = ["CUU", "MEX", "GDL", "MTY", "TIJ"]
 class Config:
     airlabs_key: str = ""
     openweather_key: str = ""
-    openaq_key: str = ""
-    thingspeak_channel: str = ""
-    thingspeak_read_key: str = ""
     backend: str = "numba"
     demo_mode: bool = True
     airports: list = field(default_factory=lambda: list(DEFAULT_AIRPORTS))
@@ -61,9 +58,6 @@ def load_config(env_path: str = ".env") -> Config:
     return Config(
         airlabs_key=airlabs,
         openweather_key=openweather,
-        openaq_key=get("OPENAQ_API_KEY"),
-        thingspeak_channel=get("THINGSPEAK_CHANNEL"),
-        thingspeak_read_key=get("THINGSPEAK_READ_KEY"),
         backend=get("BACKEND", "numba").lower(),
         demo_mode=demo,
         airports=airports,

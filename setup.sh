@@ -15,7 +15,7 @@ pip install -r requirements.txt
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "Se creó .env: pega ahí tus claves de AirLabs, OpenWeather y OpenAQ."
+  echo "Se creó .env: pega ahí tus claves de AirLabs y OpenWeather."
 fi
 
 mkdir -p data

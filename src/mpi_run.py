@@ -18,7 +18,7 @@ from src.config import load_config
 from src.storage import Storage
 
 RESULT_COLS = ["airport", "n_rows", "mean_delay_rate", "std", "outliers",
-               "corr_rain_delay", "corr_wind_delay", "corr_pm25_flights"]
+               "corr_rain_delay", "corr_wind_delay", "corr_vis_delay"]
 
 
 def partition(items: list, n: int) -> list:
@@ -29,7 +29,7 @@ def partition(items: list, n: int) -> list:
 
 
 def process_airport(df_airport: pd.DataFrame, backend: Backend, airport: str = None) -> dict:
-    """Estadísticas y correlaciones clima/aire vs retrasos y tráfico para un aeropuerto."""
+    """Estadísticas y correlaciones del clima con los retrasos para un aeropuerto."""
     if airport is None and not df_airport.empty:
         airport = str(df_airport["airport"].iloc[0])
     n = len(df_airport)
@@ -47,7 +47,7 @@ def process_airport(df_airport: pd.DataFrame, backend: Backend, airport: str = N
         "outliers": int(backend.outlier_mask(rate).sum()),
         "corr_rain_delay": backend.pearson(col("rain_mm"), rate),
         "corr_wind_delay": backend.pearson(col("wind_speed"), rate),
-        "corr_pm25_flights": backend.pearson(col("pm25"), col("flights")),
+        "corr_vis_delay": backend.pearson(col("visibility"), rate),
     }
 
 
@@ -78,7 +78,7 @@ def _process_pool(items: list, backend_name: str) -> list:
 
 
 def _load_hourly(storage: Storage) -> pd.DataFrame:
-    tables = {name: storage.load_table(name) for name in ("flights", "weather", "air_quality")}
+    tables = {name: storage.load_table(name) for name in ("flights", "weather")}
     if not tables["flights"].empty:
         tables["flights"] = clean_flights(tables["flights"])
     hourly = build_hourly(tables)

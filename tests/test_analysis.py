@@ -64,7 +64,7 @@ def test_low_visibility_row_present():
 def test_traffic_vs_environment_table():
     t = analysis.traffic_vs_environment(HOURLY)
     assert list(t.columns) == ["variable", "corr_with_flights", "corr_with_delay_rate"]
-    assert {"pm25", "temp", "wind_speed", "rain_mm"} <= set(t["variable"])
+    assert {"temp", "wind_speed", "rain_mm", "visibility"} <= set(t["variable"])
 
 
 def test_all_functions_survive_empty_input():
@@ -84,6 +84,6 @@ def test_all_functions_survive_empty_input():
 
 def test_traffic_vs_environment_constant_column_gives_nan_not_error():
     h = HOURLY.copy()
-    h["pm25"] = 10.0
+    h["temp"] = 10.0
     t = analysis.traffic_vs_environment(h).set_index("variable")
-    assert np.isnan(t.loc["pm25", "corr_with_flights"])
+    assert np.isnan(t.loc["temp", "corr_with_flights"])

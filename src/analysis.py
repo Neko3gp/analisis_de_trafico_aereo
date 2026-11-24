@@ -90,7 +90,7 @@ def traffic_vs_environment(hourly: pd.DataFrame) -> pd.DataFrame:
     if hourly is None or hourly.empty:
         return pd.DataFrame(columns=cols)
     rows = []
-    for var in ["pm25", "pm10", "temp", "humidity", "wind_speed", "rain_mm", "visibility"]:
+    for var in ["temp", "humidity", "wind_speed", "rain_mm", "visibility"]:
         if var not in hourly:
             continue
         x = pd.to_numeric(hourly[var], errors="coerce")

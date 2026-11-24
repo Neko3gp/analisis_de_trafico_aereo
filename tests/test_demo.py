@@ -8,17 +8,13 @@ FLIGHT_COLS = ["flight_iata", "airline_iata", "dep_iata", "arr_iata", "lat", "ln
                "alt", "speed", "status", "dep_delayed", "dep_time"]
 WEATHER_COLS = ["airport", "ts", "temp", "humidity", "pressure", "wind_speed",
                 "rain_mm", "visibility"]
-AQ_COLS = ["airport", "ts", "pm25", "pm10"]
-SENSOR_COLS = ["ts", "temperature", "humidity", "pressure", "pm25", "pm10",
-               "light", "wind_speed", "wind_dir"]
 
 
 def test_tables_and_columns():
     d = generate_demo(AIRPORTS, hours=24, seed=1)
     assert list(d["flights"].columns) == FLIGHT_COLS
     assert list(d["weather"].columns) == WEATHER_COLS
-    assert list(d["air_quality"].columns) == AQ_COLS
-    assert list(d["sensors"].columns) == SENSOR_COLS
+    assert set(d) == {"flights", "weather"}
 
 
 def test_deterministic_with_same_seed():

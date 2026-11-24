@@ -25,7 +25,7 @@ def generate_demo(airports: list, hours: int = 72, seed: int = 0,
     t0 = pd.Timestamp(start)
     stamps = [t0 + pd.Timedelta(hours=h) for h in range(hours)]
 
-    weather_rows, aq_rows, flight_rows = [], [], []
+    weather_rows, flight_rows = [], []
     for ap in airports:
         base_lat, _ = _coords(ap)
         for ts in stamps:
@@ -42,9 +42,6 @@ def generate_demo(airports: list, hours: int = 72, seed: int = 0,
                 "visibility": round(visibility, 0),
             })
             traffic = 1.0 + 0.8 * np.sin((hour - 6) / 24 * 2 * np.pi)
-            pm25 = float(max(2, 18 + 6 * traffic + rng.normal(0, 4) - rain * 2))
-            aq_rows.append({"airport": ap, "ts": ts, "pm25": round(pm25, 1),
-                            "pm10": round(pm25 * 1.6 + float(rng.normal(0, 3)), 1)})
 
             n = int(rng.poisson(3 + 4 * max(traffic, 0)))
             for i in range(n):
@@ -78,24 +75,7 @@ def generate_demo(airports: list, hours: int = 72, seed: int = 0,
     flights = flights[["flight_iata", "airline_iata", "dep_iata", "arr_iata", "lat", "lng",
                        "alt", "speed", "status", "dep_delayed", "dep_time"]]
 
-    sensor_rows = []
-    for ts in stamps:
-        h = ts.hour
-        sensor_rows.append({
-            "ts": ts,
-            "temperature": round(18 + 8 * np.sin((h - 9) / 24 * 2 * np.pi) + float(rng.normal(0, 1)), 1),
-            "humidity": float(np.clip(55 + float(rng.normal(0, 8)), 10, 100)),
-            "pressure": float(1013 + rng.normal(0, 3)),
-            "pm25": round(float(max(2, 16 + float(rng.normal(0, 5)))), 1),
-            "pm10": round(float(max(4, 28 + float(rng.normal(0, 8)))), 1),
-            "light": float(max(0, 800 * np.sin((h - 6) / 12 * np.pi)) if 6 <= h <= 18 else 0.0),
-            "wind_speed": round(float(abs(rng.normal(3, 1.5))), 1),
-            "wind_dir": float(rng.uniform(0, 360)),
-        })
-
     return {
         "flights": flights,
         "weather": pd.DataFrame(weather_rows),
-        "air_quality": pd.DataFrame(aq_rows),
-        "sensors": pd.DataFrame(sensor_rows),
     }

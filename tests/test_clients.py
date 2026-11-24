@@ -6,9 +6,9 @@ from src.config import Config
 from src.ingest import clients
 from src.ingest.clients import (
     fetch_all, fetch_json, normalize_airlabs_flights, normalize_airlabs_schedules,
-    normalize_openaq, normalize_openweather, normalize_thingspeak,
+    normalize_openweather,
 )
-from src.schema import AQ_COLS, FLIGHT_COLS, SENSOR_COLS, WEATHER_COLS
+from src.schema import FLIGHT_COLS, WEATHER_COLS
 from src.storage import Storage
 
 
@@ -85,8 +85,6 @@ def test_normalize_airlabs_schedules_merges_live_and_matches_schema():
 def test_normalize_none_returns_empty_with_columns():
     assert list(normalize_airlabs_schedules(None).columns) == FLIGHT_COLS
     assert list(normalize_openweather("CUU", None).columns) == WEATHER_COLS
-    assert list(normalize_openaq("CUU", None).columns) == AQ_COLS
-    assert list(normalize_thingspeak(None).columns) == SENSOR_COLS
 
 
 def test_normalize_openweather_without_rain_or_visibility():
@@ -98,33 +96,11 @@ def test_normalize_openweather_without_rain_or_visibility():
     assert pd.isna(df.loc[0, "visibility"])
 
 
-def test_normalize_openweather_with_air_pollution():
+def test_normalize_openweather_with_rain_and_visibility():
     cur = {"dt": 1763600000, "main": {"temp": 21.5, "humidity": 40, "pressure": 1015},
            "wind": {"speed": 3.2}, "rain": {"1h": 2.0}, "visibility": 8000}
     df = normalize_openweather("CUU", cur)
     assert df.loc[0, "rain_mm"] == 2.0 and df.loc[0, "visibility"] == 8000
-
-
-def test_normalize_openaq_pm_values():
-    payload = {"results": [
-        {"parameter": {"name": "pm25"}, "value": 14.0, "datetime": {"utc": "2026-11-20T15:00:00Z"}},
-        {"parameter": {"name": "pm10"}, "value": 30.0, "datetime": {"utc": "2026-11-20T15:00:00Z"}},
-    ]}
-    df = normalize_openaq("CUU", payload)
-    assert list(df.columns) == AQ_COLS
-    assert df.loc[0, "pm25"] == 14.0 and df.loc[0, "pm10"] == 30.0
-
-
-def test_normalize_thingspeak_maps_fields_by_channel_names():
-    payload = {
-        "channel": {"field1": "Temperature", "field2": "Humidity", "field3": "PM2.5"},
-        "feeds": [{"created_at": "2026-11-20T15:00:00Z", "field1": "22.5",
-                   "field2": "40", "field3": None}],
-    }
-    df = normalize_thingspeak(payload)
-    assert list(df.columns) == SENSOR_COLS
-    assert df.loc[0, "temperature"] == 22.5 and df.loc[0, "humidity"] == 40
-    assert pd.isna(df.loc[0, "pm25"])
 
 
 def test_fetch_uses_cache(tmp_path):
@@ -166,27 +142,22 @@ def _handler(url, params):
                                    "dep_delayed": 5, "dep_time": "2026-11-20 10:00"}]}
     if "airlabs.co" in url:
         return 200, {"response": []}
-    if "air_pollution" in url:
-        return 200, {"list": [{"dt": 1763600000, "components": {"pm2_5": 11.0, "pm10": 20.0}}]}
     if "openweathermap" in url:
         return 200, {"dt": 1763600000, "main": {"temp": 20, "humidity": 30, "pressure": 1010},
                      "wind": {"speed": 2}}
-    if "thingspeak" in url:
-        return 200, {"channel": {"field1": "temperature"},
-                     "feeds": [{"created_at": "2026-11-20T15:00:00Z", "field1": "20"}]}
     return 404, {}
 
 
 def _cfg(tmp_path):
-    return Config(airlabs_key="a", openweather_key="b", thingspeak_channel="123",
+    return Config(airlabs_key="a", openweather_key="b",
                   demo_mode=False, airports=["CUU", "MEX"], db_path=str(tmp_path / "t.db"))
 
 
-def test_fetch_all_runs_concurrently_and_returns_all_tables(tmp_path):
+def test_fetch_all_runs_concurrently_and_returns_both_tables(tmp_path):
     cfg = _cfg(tmp_path)
     s = FakeSession(_handler, delay=0.05)
     out = run(fetch_all(cfg, Storage(cfg.db_path), session=s))
-    assert set(out) == {"flights", "weather", "air_quality", "sensors"}
+    assert set(out) == {"flights", "weather"}
     assert s.max_in_flight > 1
     assert set(out["weather"]["airport"]) == {"CUU", "MEX"}
     assert set(out["flights"]["dep_iata"]) == {"CUU", "MEX"}

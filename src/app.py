@@ -25,13 +25,13 @@ cfg = load_config()
 def load_data(db_path: str) -> dict:
     storage = Storage(db_path)
     data = {name: storage.load_table(name)
-            for name in ("flights", "weather", "air_quality", "sensors", "hourly", "results")}
+            for name in ("flights", "weather", "hourly", "results")}
     if not data["flights"].empty:
         data["flights"] = clean_flights(data["flights"])
     if data["hourly"].empty and not data["flights"].empty:
         # aún no se ha procesado con MPI: se arma la tabla por hora aquí para no mostrar pestañas vacías
-        data["hourly"] = build_hourly({k: data[k] for k in ("flights", "weather", "air_quality")})
-    for name, col in (("weather", "ts"), ("air_quality", "ts"), ("sensors", "ts"), ("hourly", "hour")):
+        data["hourly"] = build_hourly({k: data[k] for k in ("flights", "weather")})
+    for name, col in (("weather", "ts"), ("hourly", "hour")):
         if not data[name].empty:
             data[name][col] = pd.to_datetime(data[name][col], errors="coerce")
     return data
@@ -76,8 +76,7 @@ flights = data["flights"][data["flights"]["dep_iata"].isin(chosen)]
 hourly = data["hourly"][data["hourly"]["airport"].isin(chosen)] if not data["hourly"].empty else data["hourly"]
 
 st.title("Tráfico aéreo y condiciones ambientales")
-tab_res, tab_fl, tab_wx, tab_air, tab_cpu = st.tabs(
-    ["Resumen", "Vuelos", "Clima y retrasos", "Calidad del aire y sensores", "Cómputo"])
+tab_res, tab_fl, tab_wx, tab_cpu = st.tabs(["Resumen", "Vuelos", "Clima y retrasos", "Cómputo"])
 
 with tab_res:
     d = analysis.delays_by_airport(flights)
@@ -120,19 +119,8 @@ with tab_wx:
         st.bar_chart(table.set_index("condition")["mean_delay_rate"])
         st.subheader("Lluvia vs tasa de retraso (por aeropuerto y hora)")
         st.scatter_chart(hourly.dropna(subset=["delay_rate"]), x="rain_mm", y="delay_rate")
-
-with tab_air:
-    st.subheader("Tráfico y condiciones ambientales (correlaciones)")
+    st.subheader("Tráfico y clima (correlaciones)")
     st.dataframe(analysis.traffic_vs_environment(hourly), use_container_width=True, hide_index=True)
-    aq = data["air_quality"]
-    if not aq.empty:
-        st.subheader("PM2.5 por aeropuerto")
-        st.line_chart(aq[aq["airport"].isin(chosen)].pivot_table(
-            index="ts", columns="airport", values="pm25"))
-    sensors = data["sensors"]
-    if not sensors.empty:
-        st.subheader("Sensores (ThingSpeak)")
-        st.line_chart(sensors.set_index("ts").dropna(axis=1, how="all"))
 
 with tab_cpu:
     st.subheader("Resultados del procesamiento distribuido")

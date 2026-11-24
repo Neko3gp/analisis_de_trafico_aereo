@@ -2,12 +2,12 @@ from src.ingest.run_ingest import run_ingest
 from src.storage import Storage
 
 
-def test_demo_ingest_saves_all_tables(tmp_path):
+def test_demo_ingest_saves_both_tables(tmp_path):
     env = tmp_path / ".env"
     env.write_text(f"DEMO_MODE=1\nAIRPORTS=CUU,MEX\nDB_PATH={tmp_path / 'x.db'}\n")
     tables = run_ingest(str(env))
     st = Storage(str(tmp_path / "x.db"))
-    for name in ("flights", "weather", "air_quality", "sensors"):
+    for name in ("flights", "weather"):
         assert len(st.load_table(name)) == len(tables[name]) > 0
 
 
@@ -21,9 +21,8 @@ def _weather(ts):
 
 def _empty_tables():
     import pandas as pd
-    from src.schema import AQ_COLS, FLIGHT_COLS, SENSOR_COLS
-    return {"flights": pd.DataFrame(columns=FLIGHT_COLS), "air_quality": pd.DataFrame(columns=AQ_COLS),
-            "sensors": pd.DataFrame(columns=SENSOR_COLS)}
+    from src.schema import FLIGHT_COLS
+    return {"flights": pd.DataFrame(columns=FLIGHT_COLS)}
 
 
 def test_ingest_accumulates_history_and_skips_duplicates(tmp_path, monkeypatch):

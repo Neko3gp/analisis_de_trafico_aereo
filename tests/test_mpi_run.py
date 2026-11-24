@@ -36,8 +36,7 @@ def _hourly(n=48, rain_effect=True, airport="CUU"):
     return pd.DataFrame({
         "airport": airport, "hour": pd.date_range("2026-11-01", periods=n, freq="h"),
         "flights": 10, "delayed": 1, "delay_rate": delay, "temp": 20.0, "humidity": 40.0,
-        "wind_speed": rng.uniform(0, 8, n), "rain_mm": rain, "visibility": 9000.0,
-        "pm25": rng.uniform(5, 30, n), "pm10": 40.0})[HOURLY_COLS]
+        "wind_speed": rng.uniform(0, 8, n), "rain_mm": rain, "visibility": 9000.0})[HOURLY_COLS]
 
 
 def test_process_airport_empty():

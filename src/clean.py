@@ -9,9 +9,8 @@ SPEED_RANGE = (0.0, 1300.0)    # km/h
 ALT_RANGE = (0.0, 20000.0)     # metros
 
 HOURLY_COLS = ["airport", "hour", "flights", "delayed", "delay_rate", "temp", "humidity",
-               "wind_speed", "rain_mm", "visibility", "pm25", "pm10"]
+               "wind_speed", "rain_mm", "visibility"]
 _WEATHER_VARS = ["temp", "humidity", "wind_speed", "rain_mm", "visibility"]
-_AQ_VARS = ["pm25", "pm10"]
 
 
 def clean_flights(df: pd.DataFrame) -> pd.DataFrame:
@@ -49,14 +48,11 @@ def _hourly_flights(flights: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_hourly(tables: dict) -> pd.DataFrame:
-    """Una fila por aeropuerto y hora, uniendo vuelos, clima y calidad del aire."""
+    """Una fila por aeropuerto y hora, uniendo vuelos y clima."""
     f = _hourly_flights(tables.get("flights"))
     w = _hourly_mean(tables.get("weather"), _WEATHER_VARS)
-    a = _hourly_mean(tables.get("air_quality"), _AQ_VARS)
 
-    out = f
-    for part in (w, a):
-        out = out.merge(part, on=["airport", "hour"], how="outer")
+    out = f.merge(w, on=["airport", "hour"], how="outer")
     if out.empty:
         return pd.DataFrame(columns=HOURLY_COLS)
 

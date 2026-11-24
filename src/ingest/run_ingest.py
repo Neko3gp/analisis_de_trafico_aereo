@@ -16,8 +16,6 @@ from src.storage import Storage
 TABLE_KEYS = {
     "flights": (["flight_iata", "dep_iata", "dep_time"], ["dep_time"]),
     "weather": (["airport", "ts"], ["ts"]),
-    "air_quality": (["airport", "ts"], ["ts"]),
-    "sensors": (["ts"], ["ts"]),
 }
 
 
