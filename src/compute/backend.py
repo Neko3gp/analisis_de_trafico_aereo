@@ -1,7 +1,6 @@
-"""Backends numéricos intercambiables: numpy, numba (CPU), mlx (GPU Apple) y cupy (GPU NVIDIA).
+"""Cálculos numéricos con dos opciones: numpy (base) y numba (compilado y en paralelo).
 
-get_backend("mlx") devuelve el backend pedido o, si no está instalado, el siguiente
-disponible (numba, luego numpy) con un aviso, sin romper el programa.
+get_backend("numba") devuelve Numba o, si no está instalado, numpy con un aviso.
 """
 import warnings
 from functools import lru_cache
@@ -9,38 +8,35 @@ from time import perf_counter
 
 import numpy as np
 
-from src.compute.numba_kernels import EARTH_RADIUS_KM
+from src.compute.numba_kernels import EARTH_RADIUS_KM, HAVE_NUMBA
 
 _DEG = np.pi / 180.0
 _CHUNK = 20_000  # filas por bloque en simulate_routes (acota la memoria)
-ORDER = ["numpy", "numba", "mlx", "cupy"]
 
 
 def _f64(a) -> np.ndarray:
     return np.asarray(a, dtype=np.float64)
 
 
+def _hav(la1, lo1, la2, lo2):
+    dlat, dlon = (la2 - la1) * _DEG, (lo2 - lo1) * _DEG
+    a = np.sin(dlat / 2) ** 2 + np.cos(la1 * _DEG) * np.cos(la2 * _DEG) * np.sin(dlon / 2) ** 2
+    return 2 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.minimum(a, 1.0)))
+
+
 class Backend:
-    """Implementación base (numpy). Los backends de GPU solo cambian `xp` y las conversiones."""
+    """Versión con numpy. NumbaBackend reemplaza los métodos pesados por kernels compilados."""
     name = "numpy"
-    xp = np
 
-    def _to(self, a: np.ndarray):
-        return a
-
-    def _from(self, a) -> np.ndarray:
-        return np.asarray(a)
-
-    # --- estadística
     def mean_std(self, x):
         x = _f64(x)
         x = x[~np.isnan(x)]
         if x.size == 0:
             return float("nan"), float("nan")
-        a = self._to(x)
-        return float(self._from(self.xp.mean(a))), float(self._from(self.xp.std(a)))
+        return float(np.mean(x)), float(np.std(x))
 
     def outlier_mask(self, x, z: float = 3.0) -> np.ndarray:
+        """True donde el valor está a más de z desviaciones estándar de la media."""
         x = _f64(x)
         m, s = self.mean_std(x)
         if not np.isfinite(s) or s == 0:
@@ -49,38 +45,29 @@ class Backend:
             return np.abs(x - m) / s > z  # NaN compara False
 
     def pearson(self, x, y) -> float:
+        """Correlación de Pearson ignorando los pares con NaN."""
         x, y = _f64(x), _f64(y)
         keep = ~(np.isnan(x) | np.isnan(y))
         x, y = x[keep], y[keep]
         if x.size < 2:
             return float("nan")
-        xp = self.xp
-        a, b = self._to(x), self._to(y)
-        da, db = a - xp.mean(a), b - xp.mean(b)
-        sxx, syy = float(self._from(xp.sum(da * da))), float(self._from(xp.sum(db * db)))
+        da, db = x - x.mean(), y - y.mean()
+        sxx, syy = float((da * da).sum()), float((db * db).sum())
         if sxx <= 0 or syy <= 0:
             return float("nan")
-        r = float(self._from(xp.sum(da * db))) / np.sqrt(sxx * syy)
+        r = float((da * db).sum()) / np.sqrt(sxx * syy)
         return float(min(1.0, max(-1.0, r)))
-
-    # --- geometría
-    def _hav(self, la1, lo1, la2, lo2):
-        xp = self.xp
-        dlat, dlon = (la2 - la1) * _DEG, (lo2 - lo1) * _DEG
-        a = xp.sin(dlat / 2) ** 2 + xp.cos(la1 * _DEG) * xp.cos(la2 * _DEG) * xp.sin(dlon / 2) ** 2
-        return 2 * EARTH_RADIUS_KM * xp.arcsin(xp.sqrt(xp.minimum(a, 1.0)))
 
     def haversine_km(self, lat1, lon1, lat2, lon2) -> np.ndarray:
         arrs = np.broadcast_arrays(*[_f64(a) for a in (lat1, lon1, lat2, lon2)])
-        d = self._hav(*[self._to(np.ascontiguousarray(a)) for a in arrs])
-        return self._from(d).astype(np.float64)
+        return _hav(*arrs)
 
     def _route_km(self, lat1, lon1, lat2, lon2, n_steps: int) -> np.ndarray:
-        t = self._to(np.arange(n_steps + 1) / n_steps)[None, :]
-        a1, o1, a2, o2 = (self._to(v)[:, None] for v in (lat1, lon1, lat2, lon2))
+        t = (np.arange(n_steps + 1) / n_steps)[None, :]
+        a1, o1, a2, o2 = (v[:, None] for v in (lat1, lon1, lat2, lon2))
         lat, lon = a1 + (a2 - a1) * t, o1 + (o2 - o1) * t
-        seg = self._hav(lat[:, :-1], lon[:, :-1], lat[:, 1:], lon[:, 1:])
-        return self._from(self.xp.sum(seg, axis=1)).astype(np.float64)
+        seg = _hav(lat[:, :-1], lon[:, :-1], lat[:, 1:], lon[:, 1:])
+        return seg.sum(axis=1)
 
     def simulate_routes(self, lat1, lon1, lat2, lon2, speed_kmh, n_steps: int) -> np.ndarray:
         """Horas estimadas por vuelo: ruta partida en n_steps segmentos / velocidad (NaN si no hay)."""
@@ -128,81 +115,32 @@ class NumbaBackend(Backend):
                                        int(n_steps))
 
 
-class MlxBackend(Backend):
-    """GPU del chip Apple vía Metal. MLX calcula en float32."""
-    name = "mlx"
-
-    def __init__(self):
-        import mlx.core as mx
-        self.xp = mx
-        self._mx = mx
-
-    def _to(self, a):
-        return self._mx.array(np.asarray(a, dtype=np.float32))
-
-    def _from(self, a):
-        return np.array(a)
-
-
-class CupyBackend(Backend):
-    """GPU NVIDIA (Colab). Requiere una GPU CUDA visible."""
-    name = "cupy"
-
-    def __init__(self):
-        import cupy as cp
-        if cp.cuda.runtime.getDeviceCount() < 1:
-            raise RuntimeError("no hay GPU CUDA")
-        self.xp = cp
-        self._cp = cp
-
-    def _to(self, a):
-        return self._cp.asarray(a)
-
-    def _from(self, a):
-        return self._cp.asnumpy(a)
-
-
-_FACTORIES = {"numpy": Backend, "numba": NumbaBackend, "mlx": MlxBackend, "cupy": CupyBackend}
-_FALLBACK = {"numpy": ["numpy"], "numba": ["numba", "numpy"],
-             "mlx": ["mlx", "numba", "numpy"], "cupy": ["cupy", "numba", "numpy"]}
-
-
 @lru_cache(maxsize=None)
 def available_backends() -> list:
-    found = []
-    for name in ORDER:
-        try:
-            _FACTORIES[name]()
-            found.append(name)
-        except Exception:  # noqa: BLE001 - cualquier fallo = no disponible
-            pass
-    return found
+    return ["numpy", "numba"] if HAVE_NUMBA else ["numpy"]
 
 
 def get_backend(name: str = "numba") -> Backend:
-    chain = _FALLBACK.get((name or "").lower(), ["numpy"])
-    for cand in chain:
+    if (name or "").lower() == "numba":
         try:
-            backend = _FACTORIES[cand]()
-        except Exception:  # noqa: BLE001
-            continue
-        if backend.name != name:
-            warnings.warn(f"Backend '{name}' no disponible; usando '{backend.name}'",
-                          RuntimeWarning, stacklevel=2)
-        return backend
+            return NumbaBackend()
+        except ImportError:
+            pass
+    if (name or "").lower() != "numpy":
+        warnings.warn(f"Backend '{name}' no disponible; usando 'numpy'", RuntimeWarning, stacklevel=2)
     return Backend()
 
 
 def benchmark(n: int = 100_000, n_steps: int = 64, seed: int = 0) -> dict:
-    """Segundos que tarda cada backend disponible en simular n rutas."""
+    """Segundos que tarda cada backend en simular n rutas."""
     rng = np.random.default_rng(seed)
     lat1, lat2 = rng.uniform(15, 32, n), rng.uniform(15, 32, n)
     lon1, lon2 = rng.uniform(-117, -86, n), rng.uniform(-117, -86, n)
     sp = rng.uniform(600, 900, n)
     times = {}
     for name in available_backends():
-        b = _FACTORIES[name]()
-        warm = slice(0, min(n, 16))
+        b = get_backend(name)
+        warm = slice(0, min(n, 16))  # la primera llamada de numba compila: se excluye del tiempo
         b.simulate_routes(lat1[warm], lon1[warm], lat2[warm], lon2[warm], sp[warm], n_steps)
         t0 = perf_counter()
         b.simulate_routes(lat1, lon1, lat2, lon2, sp, n_steps)

@@ -38,7 +38,7 @@ def merge_history(old: pd.DataFrame, new: pd.DataFrame, keys: list, time_cols: l
 def run_ingest(env_path: str = ".env") -> dict:
     cfg = load_config(env_path)
     storage = Storage(cfg.db_path)
-    fresh = asyncio.run(fetch_all(cfg, storage))
+    fresh = asyncio.run(fetch_all(cfg))
     tables = {}
     for name, df in fresh.items():
         keys, time_cols = TABLE_KEYS[name]

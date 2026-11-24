@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import analysis  # noqa: E402
 from src.clean import build_hourly, clean_flights  # noqa: E402
-from src.compute.backend import available_backends, benchmark, get_backend  # noqa: E402
+from src.compute.backend import benchmark, get_backend  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.ingest.run_ingest import run_ingest  # noqa: E402
 from src.storage import Storage  # noqa: E402
@@ -49,8 +49,7 @@ def process_with_mpi(n_procs: int) -> str:
 # ------------------------------------------------------------------ barra lateral
 st.sidebar.title("Controles")
 st.sidebar.caption("Modo: " + ("DEMO (datos simulados)" if cfg.demo_mode else "APIs reales"))
-st.sidebar.caption(f"Backend numérico pedido: {cfg.backend}")
-st.sidebar.caption("Backends disponibles: " + ", ".join(available_backends()))
+st.sidebar.caption(f"Cálculo numérico: {get_backend(cfg.backend).name}")
 n_procs = st.sidebar.slider("Procesos MPI", 1, max(os.cpu_count() or 1, 2), min(4, os.cpu_count() or 1))
 
 if st.sidebar.button("1. Actualizar datos (ingesta)"):
@@ -80,13 +79,14 @@ tab_res, tab_fl, tab_wx, tab_cpu = st.tabs(["Resumen", "Vuelos", "Clima y retras
 
 with tab_res:
     d = analysis.delays_by_airport(flights)
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Vuelos", f"{len(flights):,}")
-    c2.metric("Retraso medio (min)", f"{flights['dep_delayed'].mean():.1f}")
-    c3.metric("Retrasados (≥15 min)", f"{(flights['dep_delayed'] >= 15).mean() * 100:.1f}%")
-    c4.metric("Aeropuertos", len(chosen))
+    c2.metric("Activos", int((flights["status"] == "active").sum()))
+    c3.metric("Cancelados", int((flights["status"] == "cancelled").sum()))
+    c4.metric("Retraso medio (min)", f"{flights['dep_delayed'].mean():.1f}")
+    c5.metric("Retrasados (≥15 min)", f"{(flights['dep_delayed'] >= 15).mean() * 100:.1f}%")
     st.subheader("Retrasos por aeropuerto")
-    st.dataframe(d, use_container_width=True, hide_index=True)
+    st.dataframe(d, width="stretch", hide_index=True)
     if not d.empty:
         st.bar_chart(d.set_index("airport")["mean_delay_min"])
 
@@ -102,7 +102,7 @@ with tab_fl:
     st.subheader("Actividad por hora del día")
     st.line_chart(analysis.activity_by_hour(flights).set_index("hour_of_day")["flights"])
     st.subheader("Velocidad y altitud promedio")
-    st.dataframe(analysis.speed_alt_summary(flights), use_container_width=True, hide_index=True)
+    st.dataframe(analysis.speed_alt_summary(flights), width="stretch", hide_index=True)
     speed = flights["speed"].to_numpy(dtype=float)
     st.caption(f"Velocidades atípicas (|z|>3, backend {get_backend(cfg.backend).name}): "
                f"{int(get_backend(cfg.backend).outlier_mask(speed).sum())}")
@@ -114,21 +114,21 @@ with tab_fl:
 with tab_wx:
     st.subheader("Retrasos según el clima")
     table = analysis.weather_delay_table(hourly)
-    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.dataframe(table, width="stretch", hide_index=True)
     if not table.empty:
         st.bar_chart(table.set_index("condition")["mean_delay_rate"])
         st.subheader("Lluvia vs tasa de retraso (por aeropuerto y hora)")
         st.scatter_chart(hourly.dropna(subset=["delay_rate"]), x="rain_mm", y="delay_rate")
     st.subheader("Tráfico y clima (correlaciones)")
-    st.dataframe(analysis.traffic_vs_environment(hourly), use_container_width=True, hide_index=True)
+    st.dataframe(analysis.traffic_vs_environment(hourly), width="stretch", hide_index=True)
 
 with tab_cpu:
     st.subheader("Resultados del procesamiento distribuido")
     if data["results"].empty:
         st.info("Pulsa «2. Procesar con MPI» en la barra lateral.")
     else:
-        st.dataframe(data["results"].round(3), use_container_width=True, hide_index=True)
-    st.subheader("Comparación de backends")
+        st.dataframe(data["results"].round(3), width="stretch", hide_index=True)
+    st.subheader("Numpy vs Numba")
     n = st.number_input("Rutas a simular", 10_000, 2_000_000, 200_000, step=50_000)
     if st.button("Correr benchmark"):
         with st.spinner("Midiendo..."):
@@ -137,6 +137,5 @@ with tab_cpu:
         base = times.get("numpy")
         if base:
             bench["aceleración vs numpy"] = base / bench["segundos"]
-        st.dataframe(bench, use_container_width=True, hide_index=True)
+        st.dataframe(bench, width="stretch", hide_index=True)
         st.bar_chart(bench.set_index("backend")["segundos"])
-        st.caption("CuPy / CUDA solo aparece en Google Colab con GPU NVIDIA (notebooks/colab_gpu.ipynb).")

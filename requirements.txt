@@ -5,7 +5,3 @@ numba
 mpi4py
 streamlit
 pytest
-# Opcional: GPU del chip Apple (solo en Mac con Apple Silicon)
-# mlx
-# Opcional: solo en Google Colab con GPU NVIDIA (ya viene preinstalado)
-# cupy-cuda12x

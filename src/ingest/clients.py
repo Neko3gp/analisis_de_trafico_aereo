@@ -1,4 +1,4 @@
-"""Clientes asíncronos de AirLabs (vuelos) y OpenWeather (clima), con caché en SQLite.
+"""Clientes asíncronos de AirLabs (vuelos) y OpenWeather (clima).
 
 Los endpoints están como constantes para corregirlos fácil al probar con claves reales.
 """
@@ -15,30 +15,21 @@ AIRLABS_FLIGHTS = "https://airlabs.co/api/v9/flights"
 AIRLABS_SCHEDULES = "https://airlabs.co/api/v9/schedules"
 OPENWEATHER_CURRENT = "https://api.openweathermap.org/data/2.5/weather"
 
-TTL_FLIGHTS = 300       # 5 min: los vuelos cambian rápido
-TTL_WEATHER = 900       # 15 min
-
 
 def _warn(msg: str) -> None:
     print(f"[ingesta] {msg}", file=sys.stderr)
 
 
-async def fetch_json(session, url, params, headers, storage, ttl_s):
-    """GET con caché. Ante error HTTP o de red devuelve la caché vencida; si no hay, None."""
-    cached = storage.get_cached(url, params, max_age_s=ttl_s)
-    if cached is not None:
-        return cached
+async def fetch_json(session, url, params):
+    """GET asíncrono. Ante cualquier error (HTTP, red, límite de la API) avisa y devuelve None."""
     try:
-        async with session.get(url, params=params, headers=headers) as resp:
+        async with session.get(url, params=params) as resp:
             if resp.status != 200:
                 raise RuntimeError(f"HTTP {resp.status}")
-            payload = await resp.json(content_type=None)
-        storage.put_cache(url, params, payload)
-        return payload
-    except Exception as exc:  # noqa: BLE001 - cualquier fallo cae a la caché
-        stale = storage.get_cached(url, params, max_age_s=None)
-        _warn(f"{url} falló ({exc}); " + ("usando caché anterior" if stale is not None else "sin datos"))
-        return stale
+            return await resp.json(content_type=None)
+    except Exception as exc:  # noqa: BLE001 - un fallo de una API no debe tumbar a las demás
+        _warn(f"{url} falló ({exc}); sin datos")
+        return None
 
 
 # ---------------------------------------------------------------- normalizadores
@@ -109,20 +100,20 @@ def _empty() -> dict:
             "weather": pd.DataFrame(columns=WEATHER_COLS)}
 
 
-async def _airport(session, cfg, storage, ap: str):
+async def _airport(session, cfg, ap: str):
     lat, lng = AIRPORT_COORDS.get(ap, (23.0, -102.0))
     key = {"api_key": cfg.airlabs_key}
     ow = {"lat": lat, "lon": lng, "appid": cfg.openweather_key, "units": "metric"}
     sched, live, cur = await asyncio.gather(
-        fetch_json(session, AIRLABS_SCHEDULES, {**key, "dep_iata": ap}, {}, storage, TTL_FLIGHTS),
-        fetch_json(session, AIRLABS_FLIGHTS, {**key, "dep_iata": ap}, {}, storage, TTL_FLIGHTS),
-        fetch_json(session, OPENWEATHER_CURRENT, ow, {}, storage, TTL_WEATHER),
+        fetch_json(session, AIRLABS_SCHEDULES, {**key, "dep_iata": ap}),
+        fetch_json(session, AIRLABS_FLIGHTS, {**key, "dep_iata": ap}),
+        fetch_json(session, OPENWEATHER_CURRENT, ow),
     )
     return (normalize_airlabs_schedules(sched, normalize_airlabs_flights(live)),
             normalize_openweather(ap, cur))
 
 
-async def fetch_all(config, storage, session=None) -> dict:
+async def fetch_all(config, session=None) -> dict:
     """Descarga todo en paralelo (asyncio.gather). Demo: datos simulados, sin red."""
     if config.demo_mode:
         return generate_demo(config.airports)
@@ -132,7 +123,7 @@ async def fetch_all(config, storage, session=None) -> dict:
         import aiohttp  # import perezoso: solo se necesita con claves reales
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
     try:
-        results = await asyncio.gather(*[_airport(session, config, storage, ap) for ap in config.airports])
+        results = await asyncio.gather(*[_airport(session, config, ap) for ap in config.airports])
     finally:
         if own_session:
             await session.close()

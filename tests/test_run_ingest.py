@@ -33,7 +33,7 @@ def test_ingest_accumulates_history_and_skips_duplicates(tmp_path, monkeypatch):
     snapshots = iter([_weather("2026-11-20 10:00"), _weather("2026-11-20 11:00"),
                       _weather("2026-11-20 11:00")])
 
-    async def fake_fetch_all(cfg, storage, session=None):
+    async def fake_fetch_all(cfg, session=None):
         return {**_empty_tables(), "weather": next(snapshots)}
 
     monkeypatch.setattr(mod, "fetch_all", fake_fetch_all)

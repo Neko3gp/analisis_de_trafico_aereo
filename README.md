@@ -1,85 +1,73 @@
 # Tráfico aéreo y condiciones ambientales
 
-Proyecto de Cómputo paralelo y distribuido. Pregunta de fondo: **¿el clima se relaciona con los retrasos y la actividad aérea?**
+Proyecto de Cómputo Paralelo y Distribuido. Pregunta de fondo: **¿el clima se relaciona con los retrasos y la actividad aérea?**
+
+Fuentes de datos: **AirLabs** (vuelos, retrasos, posiciones) y **OpenWeather** (clima de cada aeropuerto).
 
 ```
-APIs (asyncio) → SQLite (caché + historial) → Pandas → MPI (por aeropuerto) → backend numérico → Streamlit
-AirLabs (vuelos) · OpenWeather (clima)          numba | mlx | cupy | numpy
+AirLabs + OpenWeather ──asyncio──▶ SQLite ──Pandas──▶ MPI (un grupo de aeropuertos por proceso) ──Numba──▶ Streamlit
 ```
 
-## Instalación en Mac
+| Tecnología | Para qué se usa | Archivo |
+|---|---|---|
+| asyncio (aiohttp) | pedir a las APIs de todos los aeropuertos a la vez | `src/ingest/clients.py` |
+| Pandas | limpiar y unir vuelos con clima por aeropuerto y hora | `src/clean.py`, `src/analysis.py` |
+| MPI4Py | repartir los aeropuertos entre procesos (`scatter`) y juntar resultados (`gather`) | `src/mpi_run.py` |
+| Numba | media, correlación y rutas simuladas compiladas y en paralelo (se compara contra numpy) | `src/compute/` |
+| Streamlit | dashboard con las respuestas | `src/app.py` |
+
+## Instalación (Mac)
 
 ```bash
-brew install open-mpi          # necesario para mpi4py
-./setup.sh                     # crea .venv, instala dependencias y copia .env.example a .env
+brew install open-mpi
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env           # y pega tus claves de AirLabs y OpenWeather
 ```
 
-Opcional, GPU del chip Apple: `source .venv/bin/activate && pip install mlx` y `BACKEND=mlx` en `.env`.
-
-## Claves de las APIs
-
-Pega tus claves en el archivo `.env` (el que crea `setup.sh`):
-
-| Variable | Dónde se consigue |
-|---|---|
-| `AIRLABS_API_KEY` | https://airlabs.co/ |
-| `OPENWEATHER_API_KEY` | https://openweathermap.org/api |
-
-**Sin claves el proyecto corre en modo demo** con datos simulados (también con `DEMO_MODE=1`). El dashboard indica en la barra lateral en qué modo está.
+**Sin claves el proyecto corre en modo demo** con datos simulados (también con `DEMO_MODE=1` en `.env`).
 
 ## Cómo correrlo
 
 ```bash
-./run_pipeline.sh 4            # ingesta → procesamiento con 4 procesos MPI → dashboard
+python demo_paso_a_paso.py         # recorre los 6 pasos e imprime lo que produce cada uno
+python demo_paso_a_paso.py --pausa # igual, pero espera Enter entre pasos (para las capturas)
 ```
 
-O por pasos (con el entorno activado, `source .venv/bin/activate`):
+O cada etapa por separado:
 
 ```bash
-python -m src.ingest.run_ingest              # descarga en paralelo y guarda en data/trafico.db
-mpirun -n 4 python -m src.mpi_run            # reparte aeropuertos entre procesos
-streamlit run src/app.py                     # dashboard (puerto 8501)
+python -m src.ingest.run_ingest    # descarga y guarda en data/trafico.db (cada corrida suma al historial)
+mpirun -n 4 python -m src.mpi_run  # procesa con 4 procesos MPI
+streamlit run src/app.py           # dashboard
 ```
 
-El dashboard también tiene los botones «Actualizar datos» y «Procesar con MPI». Sin `mpirun` el procesamiento usa `multiprocessing` y avisa.
+Con claves reales, corre la ingesta varias veces (por ejemplo cada hora durante un día): las APIs dan solo la foto del momento, y las correlaciones necesitan varias horas de datos.
 
-## Backends numéricos (`BACKEND` en `.env`)
+## Preguntas que responde
 
-| Backend | Dónde | Qué usa |
-|---|---|---|
-| `numba` (por defecto) | Mac | CPU con `prange`, todos los núcleos del M1 |
-| `mlx` | Mac (opcional) | GPU del chip Apple (float32) |
-| `cupy` | Google Colab | GPU NVIDIA (`notebooks/colab_gpu.ipynb`, incluye un kernel Numba CUDA) |
-| `numpy` | cualquiera | respaldo |
+1. ¿Hay relación entre clima y retrasos? → correlaciones por aeropuerto (MPI) y tabla general
+2. ¿Aumentan los retrasos con lluvia o baja visibilidad? → tabla «Retrasos según el clima»
+3. ¿Qué aeropuertos tienen más retrasos? → «Retrasos por aeropuerto»
+4. ¿Cómo cambia la actividad durante el día? → «Actividad por hora del día»
+5. ¿Qué condiciones coinciden con más tráfico? → correlación de cada variable con los vuelos por hora
 
-Si el backend pedido no está instalado se usa el siguiente disponible y se avisa. La primera llamada con `numba` tarda unos segundos en compilar. En la pestaña **Cómputo** del dashboard hay un benchmark que compara los backends.
+Un vuelo cuenta como retrasado con 15 minutos o más (`DELAY_THRESHOLD_MIN` en `src/clean.py`).
 
 ## Estructura
 
 ```
-src/config.py        lectura de .env            src/clean.py       limpieza y tabla por hora
-src/ingest/          clientes async + demo      src/analysis.py    tablas del dashboard
-src/storage.py       SQLite (caché, historial)  src/mpi_run.py     reparto con mpi4py
-src/compute/         backends y kernels         src/app.py         dashboard Streamlit
-tests/               pytest (90 pruebas)        docs/              diseño y plan
+demo_paso_a_paso.py   recorrido completo en 6 pasos
+src/config.py         lee .env                     src/clean.py     limpieza y tabla por hora
+src/ingest/           asyncio + datos demo         src/analysis.py  tablas del dashboard
+src/storage.py        SQLite                       src/mpi_run.py   reparto con MPI
+src/compute/          numpy y numba                src/app.py       dashboard Streamlit
+tests/                pytest (83 pruebas)
 ```
 
-## Cosas importantes
+## Notas
 
-- **Historial:** las APIs reales dan solo la foto del momento y cada ingesta se *suma* a la base sin duplicar. Para que las correlaciones clima-retrasos tengan sentido, corre la ingesta varias veces (por ejemplo cada hora durante un día). En modo demo ya hay 72 horas de datos.
-- **Límites de los planes gratuitos:** cada ingesta hace 2 consultas a AirLabs y 1 a OpenWeather por aeropuerto. Las respuestas se guardan en caché (5 min vuelos, 15 min clima), y si una API falla o responde 429 se usa la última respuesta guardada.
-- **Retraso:** un vuelo cuenta como retrasado con 15 minutos o más (`DELAY_THRESHOLD_MIN` en `src/clean.py`).
-- **Aeropuertos:** `AIRPORTS=CUU,MEX,GDL,MTY,TIJ` en `.env`. Las coordenadas de OpenWeather salen de `AIRPORT_COORDS` en `src/ingest/demo.py` (agrega ahí los que uses fuera de la lista).
-
-## Qué se probó y qué falta probar
-
-Probado con `pytest` (90 pruebas, datos simulados y respuestas de API falsas): configuración, caché, normalización de respuestas, concurrencia, limpieza, análisis, kernels, reparto MPI (con un comunicador simulado) y respaldos.
-
-**No se pudo probar en el entorno donde se escribió el código (sin red ni instalaciones), así que revísalo en tu Mac:**
-
-1. Las llamadas reales a AirLabs y OpenWeather. Los endpoints están como constantes al inicio de `src/ingest/clients.py` por si hay que ajustarlos.
-2. `mpirun` real, Numba, MLX y CuPy/CUDA (la lógica de los kernels sí se probó con numpy y como Python puro).
-3. El dashboard de Streamlit (solo se verificó que compila).
-
-Si algo falla, copia el mensaje de error completo y se corrige.
-# analisis_de_trafico_aereo
+- Se usa Numba en CPU (todos los núcleos del Mac). No se usa GPU/CUDA.
+- Aeropuertos: `AIRPORTS=CUU,MEX,GDL,MTY,TIJ` en `.env`. Las coordenadas para OpenWeather salen de `AIRPORT_COORDS` en `src/ingest/demo.py`.
+- Si una API falla o llega al límite del plan gratuito, esa consulta se omite con un aviso y el resto sigue.
+- Los endpoints de AirLabs y OpenWeather están como constantes al inicio de `src/ingest/clients.py`.

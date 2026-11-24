@@ -6,12 +6,10 @@ from src.compute.backend import available_backends, benchmark, get_backend
 
 RNG = np.random.default_rng(0)
 NAMES = available_backends()
-# mlx calcula en float32: tolerancia mayor
-TOL = {"mlx": dict(rtol=1e-3, atol=1e-3)}
 
 
 def tol(name):
-    return TOL.get(name, dict(rtol=1e-9, atol=1e-9))
+    return dict(rtol=1e-9, atol=1e-9)
 
 
 def test_numpy_always_available():
@@ -94,15 +92,6 @@ def test_backends_agree_on_routes(name):
     ref = get_backend("numpy").simulate_routes(lat1, lon1, lat2, lon2, sp, 16)
     got = get_backend(name).simulate_routes(lat1, lon1, lat2, lon2, sp, 16)
     assert np.allclose(got, ref, **tol(name))
-
-
-def test_unavailable_backend_falls_back_with_warning():
-    for name in ("cupy", "mlx"):
-        if name in NAMES:
-            continue
-        with pytest.warns(RuntimeWarning):
-            b = get_backend(name)
-        assert b.name in ("numba", "numpy") and b.name in NAMES
 
 
 def test_unknown_backend_falls_back_to_numpy():

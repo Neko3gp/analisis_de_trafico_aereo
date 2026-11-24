@@ -1,6 +1,6 @@
 """Procesamiento distribuido por aeropuerto.
 
-Con MPI:  mpirun -n 4 python -m src.mpi_run
+Con MPI:  mpirun -n 4 python -m src.mpi_run [ruta_al_.env]
           rank 0 lee la base, reparte los aeropuertos (scatter), todos procesan con el
           backend elegido, rank 0 junta los resultados (gather) y es el único que escribe.
 Sin mpi4py: se reparte con multiprocessing (con aviso).
@@ -56,7 +56,7 @@ def _get_comm():
     try:
         from mpi4py import MPI
         return MPI.COMM_WORLD
-    except ImportError:
+    except (ImportError, RuntimeError):  # sin mpi4py, o sin la librería de MPI instalada
         return None
 
 
@@ -109,6 +109,7 @@ def run(config, storage: Storage, comm=None):
         items = [(ap, g) for ap, g in hourly.groupby("airport")]
         chunks = partition(items, size)
     mine = comm.scatter(chunks, root=0)
+    print(f"[proceso {rank} de {size}] aeropuertos: {[ap for ap, _ in mine]}", flush=True)
     backend = get_backend(config.backend)
     local = [process_airport(df, backend, airport=ap) for ap, df in mine]
     gathered = comm.gather(local, root=0)
@@ -127,7 +128,7 @@ def _save(storage: Storage, hourly: pd.DataFrame, results: pd.DataFrame) -> None
 
 
 def main():
-    cfg = load_config()
+    cfg = load_config(sys.argv[1] if len(sys.argv) > 1 else ".env")
     results = run(cfg, Storage(cfg.db_path))
     if results is None:
         return

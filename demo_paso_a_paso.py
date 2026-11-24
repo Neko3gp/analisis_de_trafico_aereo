@@ -1,25 +1,28 @@
-"""Recorre el sistema completo en ocho pasos e imprime lo que produce cada uno.
+"""Recorre el sistema completo en 6 pasos e imprime lo que produce cada uno.
 
 Uso:
     python demo_paso_a_paso.py            # datos simulados, base temporal (no toca data/)
-    python demo_paso_a_paso.py --pausa    # espera Enter entre pasos (para capturas)
-    python demo_paso_a_paso.py --real     # usa las claves del .env y la base real
-    python demo_paso_a_paso.py --n 2000000   # rutas simuladas en el paso 7
+    python demo_paso_a_paso.py --pausa    # espera Enter entre pasos (para tomar capturas)
+    python demo_paso_a_paso.py --real     # usa las claves del .env y la base real (data/trafico.db)
+    python demo_paso_a_paso.py --n 2000000   # rutas simuladas en el paso 5
 """
 import argparse
 import asyncio
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import time
-import warnings
 
 import pandas as pd
 
 from src import analysis, mpi_run
 from src.clean import build_hourly, clean_flights
-from src.compute.backend import available_backends, benchmark, get_backend
-from src.config import Config, load_config
+from src.compute.backend import benchmark, get_backend
+from src.config import load_config
 from src.ingest.clients import fetch_all
+from src.ingest.run_ingest import TABLE_KEYS, merge_history
 from src.storage import Storage
 
 pd.set_option("display.width", 200)
@@ -57,33 +60,28 @@ def main() -> None:
     # ---------------------------------------------------------------- Paso 1
     titulo("PASO 1: Configuración (.env)", args)
     if args.real:
-        cfg = load_config(".env")
-    else:
-        ruta = os.path.join(tempfile.mkdtemp(), "demo.db")
-        cfg = Config(demo_mode=True, backend="numba", db_path=ruta)
-    print("Modo           :", "DEMO (datos simulados)" if cfg.demo_mode else "APIs reales")
+        env_path = ".env"
+    else:  # configuración temporal en modo demo: no toca tu .env ni data/
+        carpeta = tempfile.mkdtemp()
+        env_path = os.path.join(carpeta, ".env")
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(f"DEMO_MODE=1\nDB_PATH={os.path.join(carpeta, 'demo.db')}\n")
+    cfg = load_config(env_path)
+    print("Modo           :", "DEMO (datos simulados)" if cfg.demo_mode else "APIs reales (AirLabs + OpenWeather)")
     print("Aeropuertos    :", ", ".join(cfg.airports))
-    print("Backend pedido :", cfg.backend)
+    print("Cálculo        :", get_backend(cfg.backend).name)
     print("Base de datos  :", cfg.db_path)
 
     # ---------------------------------------------------------------- Paso 2
-    titulo("PASO 2: Backends numéricos disponibles en este equipo", args)
-    print("Disponibles :", ", ".join(available_backends()))
-    with warnings.catch_warnings(record=True) as avisos:
-        warnings.simplefilter("always")
-        usado = get_backend(cfg.backend)   # si el pedido falta, cae al siguiente
-    print("Se usará    :", usado.name)
-    for a in avisos:
-        print("Aviso       :", a.message)
-
-    # ---------------------------------------------------------------- Paso 3
-    titulo("PASO 3: Ingesta concurrente de las APIs (asyncio)", args)
+    titulo("PASO 2: Lectura concurrente de las APIs (asyncio) y guardado en SQLite", args)
     storage = Storage(cfg.db_path)
     t0 = time.perf_counter()
-    tablas = asyncio.run(fetch_all(cfg, storage))   # asyncio.gather por dentro
+    tablas = asyncio.run(fetch_all(cfg))        # asyncio.gather por dentro
     print(f"Ingesta terminada en {time.perf_counter() - t0:.2f} s")
     for nombre in ("flights", "weather"):
         muestra(nombre, tablas[nombre])
+        claves, fechas = TABLE_KEYS[nombre]     # se SUMA al historial sin duplicar
+        storage.save_table(nombre, merge_history(storage.load_table(nombre), tablas[nombre], claves, fechas))
     print("\nSimulación con 20 consultas de 100 ms cada una (sin red):")
     t0 = time.perf_counter()
     for _ in range(20):
@@ -95,57 +93,55 @@ def main() -> None:
     print(f"  una tras otra : {serie:.2f} s")
     print(f"  con asyncio   : {paralelo:.2f} s  (≈ {serie / paralelo:.0f}x más rápido)")
 
-    # ---------------------------------------------------------------- Paso 4
-    titulo("PASO 4: Almacenamiento en SQLite y caché de consultas", args)
-    for nombre, df in tablas.items():
-        storage.save_table(nombre, df)          # tabla lista para el procesamiento
-    cache = ("demo/endpoint", {"airport": "CUU"})
-    storage.put_cache(*cache, {"respuesta": "guardada"})
-    print("Tablas guardadas:", ", ".join(f"{k}={len(v)}" for k, v in tablas.items()))
-    print("Caché vigente   :", storage.get_cached(*cache, max_age_s=60))    # la devuelve
-    print("Caché vencida   :", storage.get_cached(*cache, max_age_s=0))     # None
-    print("Modo del diario :", storage.journal_mode(), "(WAL: lecturas mientras se escribe)")
-
-    # ---------------------------------------------------------------- Paso 5
-    titulo("PASO 5: Limpieza con Pandas y tabla por aeropuerto y hora", args)
+    # ---------------------------------------------------------------- Paso 3
+    titulo("PASO 3: Limpieza con Pandas y tabla por aeropuerto y hora", args)
     crudo = storage.load_table("flights")
     limpio = clean_flights(crudo)               # tipos, duplicados, rangos válidos
-    horaria = build_hourly({"flights": limpio,
-                            "weather": storage.load_table("weather")})
+    horaria = build_hourly({"flights": limpio, "weather": storage.load_table("weather")})
     print(f"Vuelos antes de limpiar: {len(crudo)} -> después: {len(limpio)}")
-    print(f"Velocidades sin dato (NaN): antes {int(pd.to_numeric(crudo['speed'], errors='coerce').isna().sum())}"
-          f" -> después {int(limpio['speed'].isna().sum())}")
     print("\nTabla por hora (retraso = 15 min o más):")
     print(horaria[["airport", "hour", "flights", "delayed", "delay_rate", "rain_mm", "visibility"]]
           .head(5).round({"delay_rate": 3, "rain_mm": 1, "visibility": 0}).to_string(index=False))
     print(f"... ({len(horaria)} filas en total)")
 
-    # ---------------------------------------------------------------- Paso 6
-    titulo("PASO 6: Reparto con MPI y procesamiento por aeropuerto", args)
+    # ---------------------------------------------------------------- Paso 4
+    titulo("PASO 4: Reparto con MPI y procesamiento por aeropuerto", args)
     aeropuertos = sorted(horaria["airport"].dropna().unique())
     for rango, lote in enumerate(mpi_run.partition(aeropuertos, 4)):
         print(f"  proceso {rango} recibe: {lote}")
-    resultados = mpi_run.run(cfg, storage)      # con mpirun: scatter, procesar y gather
     print()
-    print(resultados.sort_values("airport").round(3).rename(columns={
-        "mean_delay_rate": "retraso", "outliers": "atipicos", "corr_rain_delay": "r_lluvia",
-        "corr_wind_delay": "r_viento", "corr_vis_delay": "r_visibilidad"}).to_string(index=False))
+    if shutil.which("mpirun"):                  # 4 procesos reales
+        subprocess.run(["mpirun", "-n", "4", sys.executable, "-m", "src.mpi_run", env_path], check=False)
+    else:
+        print("(mpirun no está instalado: se procesa con multiprocessing)")
+        mpi_run.run(cfg, storage)
+    resultados = storage.load_table("results")
+    print("\nResultados guardados (correlación de cada variable del clima con la tasa de retraso):")
+    print(resultados.sort_values("airport").round(3).to_string(index=False))
 
-    # ---------------------------------------------------------------- Paso 7
-    titulo(f"PASO 7: Comparación de backends ({args.n:,} rutas simuladas)", args)
+    # ---------------------------------------------------------------- Paso 5
+    titulo(f"PASO 5: Numba contra numpy ({args.n:,} rutas simuladas)", args)
     tiempos = benchmark(args.n)                 # simula n rutas con cada backend
-    base = tiempos["numpy"]
     for nombre, seg in tiempos.items():
-        print(f"  {nombre:<6} {seg:8.3f} s {base / seg:5.1f}x vs numpy")
+        print(f"  {nombre:<6} {seg:8.3f} s {tiempos['numpy'] / seg:5.1f}x vs numpy")
 
-    # ---------------------------------------------------------------- Paso 8
-    titulo("PASO 8: Análisis: clima contra retrasos y tráfico", args)
-    print("Retrasos según el clima:")
-    print(analysis.weather_delay_table(horaria).round(3).to_string(index=False))
-    print("\nRetrasos por aeropuerto:")
-    print(analysis.delays_by_airport(limpio).round(2).to_string(index=False))
-    print("\nCorrelación con tráfico y con tasa de retraso:")
-    print(analysis.traffic_vs_environment(horaria).round(3).to_string(index=False))
+    # ---------------------------------------------------------------- Paso 6
+    titulo("PASO 6: Respuestas a las preguntas de análisis", args)
+    clima = analysis.weather_delay_table(horaria).set_index("condition")["mean_delay_rate"]
+    entorno = analysis.traffic_vs_environment(horaria).set_index("variable")
+    por_aeropuerto = analysis.delays_by_airport(limpio)
+    por_hora = analysis.activity_by_hour(limpio).set_index("hour_of_day")["flights"]
+
+    print("1. ¿Hay relación entre clima y retrasos? (correlación con la tasa de retraso)")
+    print(entorno["corr_with_delay_rate"].round(2).to_string())
+    print("\n2. ¿Aumentan los retrasos con lluvia o baja visibilidad? (tasa media de retraso)")
+    print((clima * 100).round(1).astype(str).add(" %").to_string())
+    print("\n3. ¿Qué aeropuertos tienen más retrasos? (retraso medio en minutos)")
+    print(por_aeropuerto[["airport", "flights", "mean_delay_min", "delayed_pct"]].round(1).to_string(index=False))
+    print(f"\n4. ¿Cómo cambia la actividad durante el día? Hora pico: {por_hora.idxmax()}:00 "
+          f"({por_hora.max()} vuelos); hora más baja: {por_hora.idxmin()}:00 ({por_hora.min()} vuelos)")
+    print("\n5. ¿Qué condiciones coinciden con más tráfico? (correlación con vuelos por hora)")
+    print(entorno["corr_with_flights"].round(2).sort_values(key=abs, ascending=False).to_string())
 
 
 if __name__ == "__main__":

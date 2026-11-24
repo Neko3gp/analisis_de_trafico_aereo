@@ -9,7 +9,6 @@ from src.ingest.clients import (
     normalize_openweather,
 )
 from src.schema import FLIGHT_COLS, WEATHER_COLS
-from src.storage import Storage
 
 
 class FakeResponse:
@@ -103,36 +102,22 @@ def test_normalize_openweather_with_rain_and_visibility():
     assert df.loc[0, "rain_mm"] == 2.0 and df.loc[0, "visibility"] == 8000
 
 
-def test_fetch_uses_cache(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
+def test_fetch_json_returns_payload():
     s = FakeSession(lambda u, p: (200, {"ok": 1}))
-    a = run(fetch_json(s, "http://x", {"a": 1}, {}, st, 60))
-    b = run(fetch_json(s, "http://x", {"a": 1}, {}, st, 60))
-    assert a == b == {"ok": 1} and s.calls == 1
+    assert run(fetch_json(s, "http://x", {"a": 1})) == {"ok": 1}
 
 
-def test_http_error_falls_back_to_stale_cache(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
-    st.put_cache("http://x", {"a": 1}, {"old": True})
+def test_http_error_returns_none():
     s = FakeSession(lambda u, p: (429, {"error": "rate"}))
-    assert run(fetch_json(s, "http://x", {"a": 1}, {}, st, 0)) == {"old": True}
+    assert run(fetch_json(s, "http://x", {"a": 1})) is None
 
 
-def test_http_error_without_cache_returns_none(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
-    s = FakeSession(lambda u, p: (500, {}))
-    assert run(fetch_json(s, "http://x", {}, {}, st, 60)) is None
-
-
-def test_network_exception_falls_back(tmp_path):
-    st = Storage(str(tmp_path / "t.db"))
-    st.put_cache("http://x", {}, [1])
-
+def test_network_exception_returns_none():
     class Boom:
         def get(self, *a, **k):
             raise OSError("sin red")
 
-    assert run(fetch_json(Boom(), "http://x", {}, {}, st, 0)) == [1]
+    assert run(fetch_json(Boom(), "http://x", {})) is None
 
 
 def _handler(url, params):
@@ -156,7 +141,7 @@ def _cfg(tmp_path):
 def test_fetch_all_runs_concurrently_and_returns_both_tables(tmp_path):
     cfg = _cfg(tmp_path)
     s = FakeSession(_handler, delay=0.05)
-    out = run(fetch_all(cfg, Storage(cfg.db_path), session=s))
+    out = run(fetch_all(cfg, session=s))
     assert set(out) == {"flights", "weather"}
     assert s.max_in_flight > 1
     assert set(out["weather"]["airport"]) == {"CUU", "MEX"}
@@ -166,14 +151,14 @@ def test_fetch_all_runs_concurrently_and_returns_both_tables(tmp_path):
 def test_fetch_all_demo_mode_makes_no_requests(tmp_path):
     cfg = Config(demo_mode=True, airports=["CUU"], db_path=str(tmp_path / "t.db"))
     s = FakeSession(_handler)
-    out = run(fetch_all(cfg, Storage(cfg.db_path), session=s))
+    out = run(fetch_all(cfg, session=s))
     assert s.calls == 0 and not out["flights"].empty
 
 
 def test_fetch_all_survives_total_failure(tmp_path):
     cfg = _cfg(tmp_path)
     s = FakeSession(lambda u, p: (500, {}))
-    out = run(fetch_all(cfg, Storage(cfg.db_path), session=s))
+    out = run(fetch_all(cfg, session=s))
     assert out["flights"].empty and list(out["flights"].columns) == FLIGHT_COLS
 
 
